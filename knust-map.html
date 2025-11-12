@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KNUST CAMPUS</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.pm@latest/dist/leaflet.pm.css" />
+    <style>
+        html,body,#map { height: 100%; margin: 0; padding: 0;}
+        .sidebar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: rgba(255,255,255,0.95);
+            border-radius:8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            max-height: 80vh;
+            overflow: auto; 
+            width: 260px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 14px;
+        }
+        .sidebar h2 {margin: 0 0 8px 0; font-size: 16px;}
+        .marker-item {margin: 6px 0; cursor: pointer;}
+        .marker-item:hover {text-decoration: underline;}
+        @media (max-width:600px){.sidebar{width: 90%; left: 5%; }}
+    </style>
+
+    </head>
+    <body>
+        <div id="map"></div>
+        <div class="sidebar" id="sidebar">
+            <h2>KNUST - Quick places</h2>
+            <div id="places"></div>
+            <hr />
+            <small>Click a place to zoom. </small>
+        </div>
+
+        <script src="https:unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        ></script>
+        <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+        <script src="https://unpkg.com/leaflet.pm@latest/dist/leaflet.pm.min.js"></script>
+        <script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+        <script>
+            const markers = [
+            {id: 1, title: 'KNUST main gate',lat: 6.6779, lng: -1.5732, description: 'Main entrance to KNUST.'},
+            {id: 2, title: 'Great Hall', lat: 6.6786, lng: -1.5718, description: 'Great Hall (events & ceremonies).'},
+            {id: 3, title: 'Main Library', lat: 6.6769, lng: -1.5738, description: 'Main Library.'},
+            {id: 4, title: 'College of Engineering', lat: 6.6780, lng: -1.5736, description: 'Faculty and labs'},
+            { id: 5, title: "Vice Chancellor's Office", lat: 6.6780, lng: -1.5725, description: 'Administration building.' },
+            { id: 6, title: 'Botanical Garden', lat: 6.6758, lng: -1.5750, description: 'Small campus garden.' }
+            
+            ];
+
+
+            const map = L.map('map').setView([6.6779, -1.5732], 16);
+
+            L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors &copy; <a href=\"https://carto.com/attributions\">CARTO</a>'
+    }).addTo(map);
+
+            const mcg = L.markerClusterGroup();
+
+            const placesDiv = document.getElementById('places');
+            markers.forEach(m =>{
+                const marker = L.marker([m.lat, m.lng]);
+                marker.bindPopup(`<strong>${escapeHtml(m.title)}</strong><br>${escapeHtml(m.description)}`)
+                marker._custom = m.id;
+                mcg.addLayer(marker);
+
+            const el = document.createElement('div');
+            el.className = 'marker-item';
+            el.textContent = m.title;
+            el.onclick = () => {map.setView([m.lat, m.lng], 18); marker.openPopup(); };
+            placesDiv.appendChild(el); 
+            });
+            map.addLayer(mcg);
+
+            L.control.locate = function(opts){
+                const control = L.control({position: opts.position || 'topleft' });
+                control.onAdd = function(){
+                    const button = L.DomUtil.create('button', 'leaflet-bar');
+                    button.title = 'Locate me';
+                    button.innerHTML = '\u{1F50E}';
+                    button.style.padding = '6px';
+                    button.onclick = () => {
+                        map.locate({setView: true, maxZoom: 17 });
+                    };
+                    return button;
+                };
+                return control;
+            };
+            L.control.locate({ position: 'topleft' }).addTo(map);
+
+            map.on ('locationfound', function(e){
+                const radius = e.accuracy / 2;
+                L.marker(e.latlng).addTo(map).bindPopup("You are within " + Math.round(radius) + " meters.").openPopup();
+                L.circle(e.latlng, radius).addTo(map);
+            });
+
+            map.on('locationerror', function(){ console.warn('Location not available.');});
+            function escapeHtml(str){return (''+str).replace(/[&<>\"']/g, function(c){ return {'&': '&amp;','<':'&lt;', '>' :'&gt;','"':'&quot;',"'":"&#39;" }[c]; });
+        }
+
+        map.pm.addControls({
+            position: 'topright',
+            drawMarker: false,
+            drawCircleMarker: false,
+            drawPolyline: false,
+            drawRectangle: true,
+            drawPolygon: true,
+            drawCircle: false,
+            editMode: true,
+            dragMode: true,
+            cutPolygon: false,
+            removalMode: true,
+        });
+
+        L.Control.SaveAsImage = L.Control.extend({
+            onAdd: function(map) {
+                const btn = L.DomUtil.create('button', 'leaflet-bar');
+                btn.title = 'Save cut-out as image';
+                btn.innerHTML = '\u{1F4BE}';
+                btn.style.cursor = 'pointer';
+                btn.style.padding = '6px';
+                btn.onclick = function() {
+                    saveCutoutAsImage();
+                };
+                return btn;
+            },
+            onRemove: function() {}
+        });
+
+        L.control.saveAsImage = function(opts) {
+            return new L.Control.SaveAsImage(opts);
+        };
+
+        L.control.saveAsImage({ position: 'topright' }).addTo(map);
+
+        function saveCutoutAsImage() {
+            if (!drawnLayer) {
+                alert('No cut-out area to save!');
+                return;
+            }
+             
+            
+            leafletImage(map, function(err, canvas){
+                if (err) {
+                    console.error('Error generating image:', err);
+                    return;
+                }
+
+                const imgData = canvas.toDataURL('image/jpeg', 0.9);
+
+                const a = document.createElement('a');
+                a.href = imgData;
+                a.download = 'knust-cutout.jpg';
+                a.click();
+            });
+        }
+
+
+
+        let drawnLayer;
+        let maskLayer;
+
+       function maskMap(geoJsonLayer){
+
+        if (maskLayer) map.removeLayer(maskLayer);
+
+        const bounds = map.getBounds();
+        const outer = [
+            [bounds.getSouthWest().lat -1, bounds.getSouthWest().lng -1],
+            [bounds.getSouthWest().lat +1, bounds.getNorthEast().lng -1],
+            [bounds.getNorthEast().lat +1, bounds.getNorthEast().lng +1],
+            [bounds.getNorthEast().lat -1, bounds.getSouthWest().lng +1],
+        ];
+
+        const inner = geoJsonLayer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+
+        maskLayer = L.polygon([outer, inner], {
+            color: 'black',
+            fillColor: 'rgba(0,0,0,0.6)',
+            stroke: false,
+            interactive: false,
+            fillRule: 'evenOdd',
+        }).addTo(map);
+          
+        maskLayer.bringToBack();
+
+       }
+        map.on('pm:create', e => {
+            if (drawnLayer) map.removeLayer(drawnLayer);
+            drawnLayer = e.layer.addTo(map);
+            drawnLayer.setStyle({ color: 'red', fillColor: 'rgba(255,0,0,0.3)'});
+           
+            maskMap(drawnLayer);
+        });
+
+
+
+        map.on('click', e => {
+  if (!maskLayer || !drawnLayer) return;
+
+  const clickedLatLng = e.latlng;
+
+ 
+  function pointInPolygon(point, poly) {
+    const x = point.lng, y = point.lat;
+    const vs = poly.getLatLngs()[0].map(ll => [ll.lng, ll.lat]); 
+    let inside = false;
+    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+      const xi = vs[i][0], yi = vs[i][1];
+      const xj = vs[j][0], yj = vs[j][1];
+
+      const intersect = ((yi > y) != (yj > y)) &&
+                        (x < (xj - xi) * (y - yi) / (yj - yi + 0.00000001) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  
+  if (!pointInPolygon(clickedLatLng, drawnLayer)) {
+    map.removeLayer(maskLayer);
+    map.removeLayer(drawnLayer);
+    maskLayer = null;
+    drawnLayer = null;
+  }
+});
+
+
+    </script>
+    </body>
+    </html>
