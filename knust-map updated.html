@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KNUST CAMPUS</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.pm@latest/dist/leaflet.pm.css" />
+<style>
+    html,body,#map { height: 100%; margin: 0; padding: 0;}
+    .sidebar {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 1000;
+        background: rgba(255,255,255,0.95);
+        border-radius:8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        max-height: 80vh;
+        overflow: auto; 
+        width: 260px;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 14px;
+        margin-bottom: 10px;
+    }
+    #selected-landmarks {
+        position: absolute;
+        top: 220px;
+        left: 10px;
+        z-index: 1000;
+        background: rgba(255,255,255,0.95);
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        max-height: 40vh;
+        overflow: auto;
+        width: 260px;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 14px;
+    }
+    @media (max-width:600px){.sidebar{width: 90%; left: 5%; }}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="selected-landmarks">
+    <h2></h2>
+    <div id="selected-places"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet.pm@latest/dist/leaflet.pm.min.js"></script>
+<script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
+<script>
+
+
+let drawnLayer, maskLayer;
+let highlightedMarkers = [];
+let drawing = false;
+let currentPoints = [];
+let tempLine;
+
+const map = L.map('map').setView([6.6779, -1.5732], 16);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+
+
+L.control.locate = function(opts){
+    const control = L.control({position: opts.position || 'topleft'});
+    control.onAdd = function(){
+        const button = L.DomUtil.create('button', 'leaflet-bar');
+        button.title = 'Locate me';
+        button.innerHTML = '\u{1F50E}';
+        button.style.padding = '6px';
+        button.onclick = () => map.locate({setView:true, maxZoom:17});
+        return button;
+    };
+    return control;
+};
+L.control.locate({ position: 'topleft' }).addTo(map);
+
+map.on('locationfound', function(e){
+    const radius = e.accuracy / 2;
+    L.marker(e.latlng).addTo(map).bindPopup("You are within " + Math.round(radius) + " meters.").openPopup();
+    L.circle(e.latlng, radius).addTo(map);
+});
+map.on('locationerror', () => console.warn('Location not available.'));
+
+
+map.pm.addControls({
+    position: 'topright',
+    drawMarker: false,
+    drawCircleMarker: false,
+    drawPolyline: false,
+    drawRectangle: false,
+    drawPolygon: true,
+    drawCircle: false,
+    editMode: true,
+    dragMode: false,
+    cutPolygon: false,
+    removalMode: true,
+});
+
+
+L.Control.SaveAsImage = L.Control.extend({
+    onAdd: function() {
+        const btn = L.DomUtil.create('button', 'leaflet-bar');
+        btn.title = 'Save cut-out as image';
+        btn.innerHTML = '\u{1F4BE}';
+        btn.style.cursor = 'pointer';
+        btn.style.padding = '6px';
+        btn.onclick = saveCutoutAsImage;
+        return btn;
+    }
+});
+L.control.saveAsImage = function(opts){ return new L.Control.SaveAsImage(opts); };
+L.control.saveAsImage({ position: 'topright' }).addTo(map);
+
+
+function escapeHtml(str){
+    return (''+str).replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));
+}
+
+
+function saveCutoutAsImage() {
+    if(!drawnLayer){ alert('No cut-out area to save!'); return; }
+    leafletImage(map, function(err, canvas){
+        if(err){ console.error(err); return; }
+        const a = document.createElement('a');
+        a.href = canvas.toDataURL('image/jpeg', 0.9);
+        a.download = 'knust-cutout.jpg';
+        a.click();
+    });
+}
+
+function updateSidebar(markersToShow){
+    const sidebarDiv = document.getElementById('selected-places');
+    sidebarDiv.innerHTML = ''; 
+    markersToShow.forEach(m => {
+        const elDiv = document.createElement('div');
+        elDiv.textContent = m.title || m.tags?.name || 'Unnamed';
+        sidebarDiv.appendChild(elDiv);
+    });
+}
+
+
+function maskMap(polygon){
+    if(maskLayer) map.removeLayer(maskLayer);
+    const outer = [[-90,-180],[-90,180],[90,180],[90,-180]];
+    const inner = polygon.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+    maskLayer = L.polygon([outer, inner], {
+        color:'black', fillColor:'rgba(0,0,0,0.6)',
+        stroke:false, interactive:false, fillRule:'evenOdd'
+    }).addTo(map);
+    maskLayer.bringToBack();
+}
+
+
+function fetchOSMLandmarks(polygon){
+    highlightedMarkers.forEach(m => map.removeLayer(m));
+    highlightedMarkers = [];
+    const sidebarDiv = document.getElementById('selected-places');
+    sidebarDiv.innerHTML = '';
+
+    const simplified = turf.simplify(polygon.toGeoJSON(), { tolerance: 0.0005, highQuality: true });
+
+    
+    const coords = simplified.geometry.coordinates[0]
+        .map(pt => `${pt[1]} ${pt[0]}`) 
+        .join(' ');
+
+    const query = `[out:json];(way["building"](poly:"${coords}");node["amenity"](poly:"${coords}"););out center;`;
+
+    fetch('https://overpass-api.de/api/interpreter', { method:'POST', body: query })
+        .then(res => res.json())
+        .then(data => {
+            data.elements.forEach(el => {
+                const lat = el.lat || (el.center && el.center.lat);
+                const lng = el.lon || (el.center && el.center.lon);
+                if(!lat || !lng) return;
+                const name = el.tags?.name || el.tags?.amenity || 'Unnamed';
+                const marker = L.marker([lat,lng]).bindPopup(`<strong>${name}</strong>`).addTo(map);
+                highlightedMarkers.push(marker);
+                const elDiv = document.createElement('div');
+                elDiv.textContent = name;
+                sidebarDiv.appendChild(elDiv);
+            });
+        }).catch(err => console.error(err));
+}
+
+map.on('contextmenu', e => {
+    drawing = true;
+    currentPoints = [e.latlng];
+    map.dragging.disable();
+    tempLine = L.polyline(currentPoints, {color:'red', weight:2}).addTo(map);
+});
+map.on('mousemove', e => {
+    if(!drawing) return;
+    currentPoints.push(e.latlng);
+    tempLine.setLatLngs(currentPoints);
+});
+map.on('mouseup', e => {
+    if(!drawing) return;
+    drawing = false;
+    map.dragging.enable(); 
+    map.removeLayer(tempLine);
+
+    const polygon = L.polygon(currentPoints, {color:'red', fillColor:'rgba(255,0,0,0.3)', weight:2}).addTo(map);
+    drawnLayer = polygon;
+
+    maskMap(drawnLayer);
+    fetchOSMLandmarks(drawnLayer);
+});
+
+
+map.on('pm:create', e => {
+    const newlayer = e.layer;
+    newlayer.addTo(map);
+    newlayer.setStyle({color:'red', fillColor:'rgba(255,0,0,0.3)'});
+    drawnLayer = newlayer;
+
+    maskMap(drawnLayer);
+
+    fetchOSMLandmarks(drawnLayer);
+
+    
+});
+</script>
+</body>
+</html>
